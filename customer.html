@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Customer · Cab Portal</title><link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<header><span>🚕 Customer</span><nav class="noprint"><button id="nb">My ride</button><button id="nh">Trip history</button><a href="driver.html">Driver app</a></nav></header>
+<main>
+<section id="v-book" class="box">
+  <h2>Book a cab</h2>
+  <label for="from">Pickup location</label>
+  <div class="pf"><input id="from" placeholder="Search pickup address or area" autocomplete="off"><ul class="sug" id="fsug" hidden></ul></div>
+  <button type="button" class="o" id="here" style="margin-top:6px;padding:8px;font-size:14px">📍 Use my current location</button>
+  <label for="to">Drop location</label>
+  <div class="pf"><input id="to" placeholder="Search drop address or area" autocomplete="off"><ul class="sug" id="tsug" hidden></ul></div>
+  <div id="bmap" class="map" style="margin-top:12px" hidden></div>
+  <p class="mut" id="est" style="margin:8px 0 0"></p>
+  <label for="type">Cab type</label>
+  <select id="type"><option value="Mini">Mini</option><option value="Sedan">Sedan</option><option value="SUV">SUV (6 seats)</option></select>
+  <label for="name">Your name</label><input id="name" placeholder="Enter your name">
+  <p class="fare" id="fare"></p><p class="err" id="err" role="alert"></p>
+  <button id="book">Book now</button>
+</section>
+
+<section id="v-find" class="box" hidden>
+  <h2 id="ft">Finding your driver</h2><p class="status" id="fs" aria-live="polite"></p><p class="mut" id="fsub" style="margin:0"></p>
+  <ul class="log" id="flog"></ul>
+  <button id="fretry" hidden>Search again</button><button class="o" id="fcancel">Cancel booking</button>
+</section>
+
+<section id="v-track" hidden>
+  <div class="box">
+    <p class="status" id="status" aria-live="polite"></p><div class="mut" id="eta"></div>
+    <div class="bar"><div id="pb"></div></div>
+    <div id="map" class="map"></div>
+    <p class="mut" style="margin:8px 0 0">🟢 Pickup &nbsp; 🏁 Drop &nbsp; 🚕 Your driver, live from their phone's GPS</p>
+  </div>
+  <div class="box">
+    <div class="cab"><div class="av" id="av"></div><div><b id="dn"></b> · ★ <span id="rt"></span><br><span id="cn" class="mut"></span><br><span class="plate" id="pl"></span></div></div>
+    <div id="pinbox"><p class="mut" style="margin:14px 0 0">Your ride PIN. Tell it to the driver to start the ride.</p><p class="pin" id="pin"></p></div>
+  </div>
+  <button class="o" id="cancel">Cancel ride</button>
+</section>
+
+<section id="v-pay" class="box" hidden>
+  <h2>Trip ended. Pay for your ride</h2><div id="paybill"></div>
+  <label for="pm">Payment method</label>
+  <select id="pm"><option value="UPI">UPI (scan QR)</option><option value="Cash to driver">Cash to driver</option></select>
+  <div id="upibox" style="text-align:center;margin-top:12px">
+    <img id="qr" class="qr" alt="UPI payment QR code" width="200" height="200">
+    <p style="margin:8px 0 0"><b id="payee"></b><br><span class="mut" id="payupi"></span></p>
+    <a id="upilink" class="lnkbtn" href="#">Open UPI app</a>
+    <label for="uref" style="text-align:left">UPI transaction ID (optional)</label><input id="uref" placeholder="UTR from your UPI app">
+    <p class="mut" style="text-align:left;margin:8px 0 0">Scan with any UPI app, pay the exact amount, then press the button below.</p>
+  </div>
+  <button id="pay"></button><p class="err" id="perr" role="alert"></p>
+</section>
+
+<section id="v-rcpt" hidden>
+  <div class="paid" id="paidmsg">✔ Payment successful</div>
+  <div class="box"><h2>Bill / Receipt</h2><div id="rc"></div></div>
+  <button class="noprint" id="print">Print receipt</button>
+  <button class="o noprint" id="r2h">Trip history</button><button class="o noprint" id="r2b">Book another cab</button>
+</section>
+
+<section id="v-hist" class="box" hidden><h2>Trip history</h2><div id="hl"></div></section>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="shared.js"></script>
+<script>
+var VIEWS = ["book","find","track","pay","rcpt","hist"];
+function view(v) { VIEWS.forEach(function (x) { $("v-" + x).hidden = x != v; }); window.scrollTo(0, 0); }
+var cid = st("cab_cid"); if (!cid) { cid = "c" + Math.random().toString(36).slice(2, 10); st("cab_cid", cid); }
+var rid = st("cab_rid") || "", R = null, shown = "", hold = false, routeCache = {};
+
+/* ---- 1. choose pickup and drop on real addresses ---- */
+var FROM = null, TO = null, EST = null, BM = null, BL = null;
+placeSearch($("from"), $("fsug"), function (p) { FROM = p; est(); });
+placeSearch($("to"), $("tsug"), function (p) { TO = p; est(); });
+$("here").onclick = function () { $("err").textContent = ""; myLocation(function (p) { FROM = p; $("from").value = p.label; est(); }, function (m) { $("err").textContent = m; }); };
+function est() {
+  EST = null; showEst();
+  if (!FROM || !TO) return;
+  api("route?from=" + FROM.lat + "," + FROM.lng + "&to=" + TO.lat + "," + TO.lng).then(function (j) { if (FROM && TO) { EST = j; showEst(); preview(); } }).catch(function (e) { $("est").textContent = e.message; });
+}
+function showEst() {
+  var t = $("type").value, o = $("type").options;
+  if (!EST) { $("est").textContent = FROM && TO ? "Finding the best route…" : ""; $("fare").textContent = ""; $("bmap").hidden = !(FROM && TO); for (var i = 0; i < o.length; i++) o[i].textContent = o[i].value == "SUV" ? "SUV (6 seats)" : o[i].value; return; }
+  $("est").textContent = EST.km.toFixed(1) + " km · about " + EST.mins + " min" + (EST.source == "road" ? "" : " (estimate)");
+  for (var k = 0; k < o.length; k++) o[k].textContent = o[k].value + " · ₹" + EST.fares[o[k].value];
+  $("fare").textContent = "Fare: ₹" + EST.fares[t];
+}
+$("type").onchange = showEst;
+function preview() {
+  $("bmap").hidden = false; if (!BM) { BM = mkMap("bmap"); BL = L.layerGroup().addTo(BM); } BM.invalidateSize(); BL.clearLayers();
+  var a = [FROM.lat, FROM.lng], b = [TO.lat, TO.lng];
+  L.marker(a, { icon: ico("🟢") }).addTo(BL); L.marker(b, { icon: ico("🏁") }).addTo(BL); L.polyline(EST.coords, { color: "#222", weight: 5, opacity: .6 }).addTo(BL);
+  BM.fitBounds(L.latLngBounds(EST.coords), { padding: [25, 25] });
+}
+
+/* ---- 2. book / cancel / retry / pay ---- */
+function act(body) { body.id = rid; body.cid = cid; return api("ride", body).then(function (j) { R = j.ride; if (R.route) routeCache[R.id] = R.route; render(); }).catch(function (e) { $("err").textContent = e.message; $("perr").textContent = e.message; if (R && R.status == "ended") payUI(); }); }
+$("book").onclick = function () {
+  var n = $("name").value.trim();
+  if (!FROM || !TO) { $("err").textContent = "Choose pickup and drop from the suggestions."; return; }
+  if (!n) { $("err").textContent = "Please enter your name."; return; }
+  $("err").textContent = ""; this.disabled = true; var b = this;
+  api("ride", { action: "create", cid: cid, name: n, type: $("type").value, from: { label: FROM.label, lat: FROM.lat, lng: FROM.lng }, to: { label: TO.label, lat: TO.lat, lng: TO.lng } })
+    .then(function (j) { R = j.ride; rid = R.id; st("cab_rid", rid); if (R.route) routeCache[R.id] = R.route; shown = ""; hold = false; render(); })
+    .catch(function (e) { $("err").textContent = e.message; }).then(function () { b.disabled = false; });
+};
+function cancel() { act({ action: "cancel" }); }
+$("cancel").onclick = cancel; $("fcancel").onclick = cancel;
+$("fretry").onclick = function () { shown = ""; act({ action: "retry" }); };
+function payUI() {
+  var u = $("pm").value == "UPI", t = R && R.payto; $("upibox").hidden = !u; $("pay").disabled = false;
+  if (u) {
+    if (t && t.upi) {
+      var url = upiUrl(t.upi, t.name, R.total, "Cab " + R.id), img = qrURL(url);
+      $("qr").hidden = !img; if (img) $("qr").src = img; $("payee").textContent = "Pay to " + t.name; $("payupi").textContent = t.upi + " · ₹" + R.total; $("upilink").href = url; $("upilink").hidden = false;
+    } else { $("qr").hidden = true; $("upilink").hidden = true; $("payee").textContent = "UPI is not set up for this trip."; $("payupi").textContent = "Please choose cash to driver."; $("pay").disabled = true; }
+  }
+  $("pay").textContent = u ? "I have paid ₹" + R.total : "Pay ₹" + R.total + " in cash";
+}
+$("pm").onchange = function () { $("perr").textContent = ""; payUI(); };
+$("pay").onclick = function () { this.disabled = true; this.textContent = "Processing payment…"; act({ action: "pay", method: $("pm").value, ref: $("uref").value }); };
+
+/* ---- 3. live tracking on the map ---- */
+var TM = null, TL = {}, tmid = "", etaAt = 0, ETA = null;
+function trackMap(r) {
+  if (TM && tmid == r.id) { TM.invalidateSize(); return; }
+  if (TM) { TM.remove(); TM = null; } tmid = r.id; TL = {}; ETA = null; etaAt = 0; TM = mkMap("map");
+  var a = [r.from_lat, r.from_lng], b = [r.to_lat, r.to_lng];
+  L.marker(a, { icon: ico("🟢") }).addTo(TM).bindTooltip("Pickup"); L.marker(b, { icon: ico("🏁") }).addTo(TM).bindTooltip("Drop");
+  TM.fitBounds(L.latLngBounds([a, b]), { padding: [30, 30] });
+}
+function driverPos() { return R.dlat != null && R.dloc && nowS() - R.dloc < 45000 ? [R.dlat, R.dlng] : null; }
+function trackLive() {
+  var s = R.status, dp = driverPos(), tgt = s == "ontrip" ? [R.to_lat, R.to_lng] : [R.from_lat, R.from_lng];
+  if (!TL.route && routeCache[R.id]) TL.route = L.polyline(routeCache[R.id], { color: "#222", weight: 5, opacity: .6 }).addTo(TM);
+  if (dp) { if (!TL.cab) { TL.cab = L.marker(dp, { icon: ico("🚕", "cab"), zIndexOffset: 1000 }).addTo(TM); TM.fitBounds(L.latLngBounds([dp, [R.from_lat, R.from_lng], [R.to_lat, R.to_lng]]), { padding: [30, 30] }); } else TL.cab.setLatLng(dp); }
+  else if (TL.cab) { TM.removeLayer(TL.cab); TL.cab = null; }
+  if (dp && Date.now() - etaAt > 15000 && s != "arrived") {                     // road distance and time from the driver to the next stop
+    etaAt = Date.now();
+    api("route?from=" + dp[0] + "," + dp[1] + "&to=" + tgt[0] + "," + tgt[1]).then(function (j) {
+      ETA = j; if (R && R.status == "accepted" && TM) { if (TL.appr) TL.appr.setLatLngs(j.coords); else TL.appr = L.polyline(j.coords, { color: "#2e7de0", weight: 4, dashArray: "6 8" }).addTo(TM); }
+    }).catch(function () { });
+  }
+  if (s != "accepted" && TL.appr) { TM.removeLayer(TL.appr); TL.appr = null; }
+  if (s == "accepted") { $("status").textContent = R.dname + " accepted. Driver is on the way"; $("eta").textContent = ETA ? "Arriving in about " + ETA.mins + " min · " + ETA.km.toFixed(1) + " km away" : dp ? "Finding the driver's route…" : "Waiting for the driver's GPS…"; $("pb").style.width = "10%"; }
+  if (s == "arrived") { $("status").textContent = "Driver has arrived. Share your PIN"; $("eta").textContent = "The trip starts when the driver enters your PIN."; $("pb").style.width = "20%"; }
+  if (s == "ontrip") { var left = ETA ? Math.min(1, ETA.km / R.km) : .7; $("status").textContent = "Ride started. Heading to " + R.to_place; $("eta").textContent = ETA ? ETA.mins + " min left · " + ETA.km.toFixed(1) + " km to go" : "About " + R.mins + " min"; $("pb").style.width = 20 + 80 * (1 - left) + "%"; }
+}
+
+/* ---- screens (rebuilt only when the status changes) ---- */
+function bill(r) { return '<div class="row"><span>Base fare</span><span>₹' + r.base + '</span></div><div class="row"><span>Distance charge</span><span>₹' + r.dist_fare + '</span></div><div class="row"><span>Taxes (5%)</span><span>₹' + r.tax + '</span></div><div class="row tot"><span>Total</span><span>₹' + r.total + '</span></div>'; }
+function screen() {
+  var s = R.status; if (hold) return;
+  if (s == "searching" || s == "norides") view("find");
+  else if (s == "accepted" || s == "arrived" || s == "ontrip") {
+    view("track"); $("av").textContent = R.dname[0]; $("dn").textContent = R.dname; $("rt").textContent = R.drating; $("cn").textContent = R.dcar + " · " + R.type; $("pl").textContent = R.dplate; $("pin").textContent = R.pin;
+    trackMap(R); $("pinbox").hidden = s == "ontrip"; $("cancel").hidden = s == "ontrip";
+  } else if (s == "ended") { $("paybill").innerHTML = '<p class="mut" style="margin:0 0 8px">' + esc(R.from_place) + ' to ' + esc(R.to_place) + ' · ' + R.km.toFixed(1) + ' km</p>' + bill(R); $("perr").textContent = ""; $("uref").value = ""; $("pm").value = "UPI"; payUI(); view("pay"); }
+  else if (s == "paid") receipt(R, true);
+  else if (s == "cancelled") { st("cab_rid", null); rid = ""; R = null; shown = ""; view("book"); $("err").textContent = "Your booking was cancelled."; }
+}
+function live() {
+  var s = R.status, n = nowS();
+  if (s == "searching") {
+    var cur = R.queue[R.idx], d = R.dists[cur]; $("ft").textContent = "Finding your driver"; $("fretry").hidden = true;
+    $("fs").textContent = "Request sent to a driver " + (d != null ? d + " km away" : "nearby");
+    $("fsub").textContent = "Waiting for reply · " + Math.max(0, 15 - Math.floor((n - R.offer_at) / 1000)) + "s. If the driver rejects or does not reply, the next nearest driver is asked.";
+  } else if (s == "norides") { $("ft").textContent = "No driver available"; $("fs").textContent = "No driver accepted your booking."; $("fsub").textContent = "All nearby drivers rejected, did not reply, or are offline. Please search again."; $("fretry").hidden = false; }
+  if (s == "searching" || s == "norides") $("flog").innerHTML = R.log.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("");
+  if ((s == "accepted" || s == "arrived" || s == "ontrip") && TM && !hold) trackLive();
+}
+function render() { if (!R) return; var key = R.id + R.status; if (key !== shown) { shown = key; screen(); } if (R && !hold) live(); }
+function poll() { if (!rid) return; api("ride?id=" + encodeURIComponent(rid) + (routeCache[rid] ? "" : "&route=1")).then(function (j) { R = j.ride; if (R.route) routeCache[R.id] = R.route; render(); }).catch(function (e) { if (/not found/i.test(e.message)) { st("cab_rid", null); rid = ""; R = null; } }); }
+
+/* ---- receipt, history ---- */
+function receipt(r, fresh) {
+  $("paidmsg").hidden = !fresh;
+  var row = function (a, b) { return '<div class="row"><span class="mut">' + a + '</span><span>' + esc(b) + '</span></div>'; };
+  $("rc").innerHTML = row("Receipt no.", r.id) + row("Date", new Date(r.created_at).toLocaleString("en-IN")) + row("Passenger", r.name) + row("From", r.from_place) + row("To", r.to_place) + row("Distance", r.km.toFixed(1) + " km") +
+    row("Cab", r.dcar + " · " + r.type) + row("Plate", r.dplate) + row("Driver", r.dname) + '<hr style="border:0;border-top:1px dashed var(--line)">' + bill(r) + row("Paid by", r.method) + (r.upi_ref ? row("UPI ref", r.upi_ref) : "") + '<div class="row"><span class="mut">Status</span><b style="color:var(--ok)">' + (r.method == "Cash to driver" ? "Paid in cash" : "Paid") + '</b></div>';
+  view("rcpt");
+}
+function history() {
+  hold = true; view("hist");
+  api("ride?list=1&cid=" + encodeURIComponent(cid)).then(function (j) {
+    $("hl").innerHTML = j.rides.length ? j.rides.map(function (r, i) { return '<div class="h"><div><b>' + esc(r.from_place) + ' to ' + esc(r.to_place) + '</b><br><span class="mut">' + new Date(r.created_at).toLocaleString("en-IN") + ' · ' + esc(r.id) + '</span></div><div style="text-align:right"><b>₹' + r.total + '</b><br><button class="o" data-i="' + i + '">Receipt</button></div></div>'; }).join("") : '<p class="mut">No trips yet. Your completed trips will appear here.</p>';
+    $("hl").querySelectorAll("button").forEach(function (b) { b.onclick = function () { receipt(j.rides[+b.dataset.i], false); }; });
+  }).catch(function (e) { $("hl").textContent = e.message; });
+}
+$("nh").onclick = history; $("r2h").onclick = history;
+$("nb").onclick = function () { hold = false; shown = ""; if (R) render(); else view("book"); };
+$("r2b").onclick = function () { st("cab_rid", null); rid = ""; R = null; hold = false; shown = ""; view("book"); };
+$("print").onclick = function () { window.print(); };
+setInterval(poll, 2000); setInterval(function () { if (R) live(); }, 1000); poll();
+</script>
+</body></html>

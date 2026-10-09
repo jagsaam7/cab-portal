@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dashboard · Cab Portal</title><link rel="stylesheet" href="shared.css"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+main{max-width:1050px}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tabs button{width:auto;margin:0;padding:8px 14px;font-size:14px;background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.tabs button[aria-selected=true]{background:var(--ink);color:var(--card);border-color:var(--ink)}
+.bar2{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}.bar2 select,.bar2 input{width:auto;min-width:130px;padding:8px;font-size:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}.kpi b{display:block;font-size:22px}.kpi span{color:var(--mut);font-size:13px}.kpi.hl{border-color:var(--ok)}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th{text-align:left;font-size:12px;color:var(--mut);padding:6px;white-space:nowrap}td{padding:8px 6px;border-top:1px solid var(--line);vertical-align:middle}
+.r{text-align:right}.sm{width:auto;margin:0;padding:5px 10px;font-size:13px}.lnk{background:none;border:0;color:#0066cc;padding:0;margin:0;width:auto;font-size:14px;font-weight:normal;text-decoration:underline;cursor:pointer;text-align:left}
+.chip{display:inline-flex;gap:6px;align-items:center;background:var(--acc);color:#222;border-radius:14px;padding:3px 10px;font-size:13px}.chip button{width:auto;margin:0;padding:0 2px;background:none;border:0;color:#222;font-size:15px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;background:var(--line)}.dot.on{background:var(--ok)}
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}@media(max-width:560px){.fg{grid-template-columns:1fr}}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:760px){.g2{grid-template-columns:1fr}}
+</style></head>
+<body>
+<header><span>📊 Agency dashboard</span><nav><a href="index.html">Home</a></nav></header>
+<main>
+  <div class="box" id="login" style="max-width:420px;margin:20px auto">
+    <h2>Admin sign in</h2>
+    <label for="key" style="margin-top:0">Admin key</label><input id="key" type="password" autocomplete="current-password" placeholder="ADMIN_KEY value">
+    <button id="enter">Sign in</button><p class="err" id="lerr" role="alert"></p>
+  </div>
+
+  <div id="app" hidden>
+    <div class="row" style="flex-wrap:wrap;align-items:flex-start">
+      <div class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-t="overview">Overview</button><button role="tab" data-t="drivers">Drivers</button><button role="tab" data-t="trips">Trips</button><button role="tab" data-t="live">Live map</button><button role="tab" data-t="customers">Customers</button><button role="tab" data-t="payouts">Payouts</button><button role="tab" data-t="manage">Manage drivers</button><button role="tab" data-t="settings">Payment settings</button>
+      </div>
+      <button class="o sm" id="out">Sign out</button>
+    </div>
+
+    <div class="bar2" id="fbar">
+      <select id="rng" aria-label="Date range"><option value="today">Today</option><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="month">This month</option><option value="all">All time</option><option value="custom">Custom</option></select>
+      <span id="cust" hidden><input type="date" id="df" aria-label="From date"> <input type="date" id="dt" aria-label="To date"></span>
+      <input id="sq" placeholder="Search" aria-label="Search">
+      <select id="ss" aria-label="Status"><option value="">All trips</option><option value="paid">Completed and paid</option><option value="cancelled">Cancelled or unserved</option><option value="active">In progress</option></select>
+      <select id="so" aria-label="Sort by"></select>
+      <button class="o sm" id="exp">Export CSV</button>
+    </div>
+    <div id="chips" style="margin-bottom:10px"></div>
+    <p class="err" id="perr" role="alert"></p>
+    <div id="spanel" hidden></div>
+    <div id="pane"></div>
+
+    <div id="live" class="box" hidden><h2>Drivers on the map</h2><p class="mut" id="lsum">Loading…</p><div id="lmap" class="map" style="height:480px"></div><p class="mut" style="margin:8px 0 0">Green = available, orange = on a trip. Updates every 5 seconds. Only drivers who are online and sharing GPS are shown.</p></div>
+
+    <div id="sett" class="box" hidden>
+      <h2>Payment settings</h2>
+      <label for="su" style="margin-top:0">Agency UPI ID (customers pay here)</label><input id="su" placeholder="agency@bank">
+      <label for="sp">Payee name shown to customers</label><input id="sp" placeholder="Your agency name">
+      <label class="chk"><input type="radio" name="pm2" value="agency"> Customers pay the agency's UPI. Drivers are paid later from the Payouts tab.</label>
+      <label class="chk"><input type="radio" name="pm2" value="driver"> Customers pay each driver's own UPI. Drivers then owe you the commission.</label>
+      <div id="sqrp" style="text-align:center;margin-top:12px"></div>
+      <button id="ssave">Save settings</button><p class="err" id="sterr" role="alert"></p>
+    </div>
+
+    <div id="mng" hidden>
+      <div class="box">
+        <h2 id="fh">Add a driver</h2>
+        <div class="fg">
+          <div><label for="fn">Driver name</label><input id="fn" placeholder="Manjunath R"></div>
+          <div><label for="fc">Car model</label><input id="fc" placeholder="Maruti Dzire"></div>
+          <div><label for="fp">Plate number</label><input id="fp" placeholder="KA 04 MN 5521"></div>
+          <div><label for="fr">Rating (1 to 5)</label><input id="fr" inputmode="decimal" placeholder="4.5"></div>
+          <div class="full" style="grid-column:1/-1"><label for="fu">Payout UPI ID (optional)</label><input id="fu" placeholder="driver@bank"></div>
+        </div>
+        <div class="two"><button id="save">Add driver</button><button class="o" id="clear">Clear form</button></div>
+        <p class="err" id="err" role="alert"></p>
+      </div>
+      <div class="box"><h2>Drivers</h2>
+        <div class="tw"><table><thead><tr><th>Driver</th><th>Car</th><th>Rating</th><th>UPI ID</th><th>Trips</th><th>Online</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="shared.js"></script>
+<script>
+var S = { tab: "overview", page: 1, q: "", status: "", sort: "", driver: 0, dname: "", cid: "", cname: "" }, tz = -new Date().getTimezoneOffset(), D = [], editId = 0, last = null, tmr = 0;
+var SORTS = { drivers: [["revenue","Highest revenue"],["trips","Most trips"],["commission","Most commission"],["name","Name A to Z"],["last_trip","Latest trip"]], payouts: [["balance_desc","You owe most"],["balance_asc","Drivers owe most"],["name","Name A to Z"]], customers: [["spent","Highest spend"],["trips","Most trips"],["last_trip","Latest trip"]] };
+function inr(n) { return "₹" + Math.round(n || 0).toLocaleString("en-IN"); }
+function dt(ms) { return ms ? new Date(ms).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "–"; }
+function qs(o) { return Object.keys(o).filter(function (k) { return o[k] !== "" && o[k] != null && o[k] !== 0; }).map(function (k) { return k + "=" + encodeURIComponent(o[k]); }).join("&"); }
+function range() {
+  var v = $("rng").value, n = new Date(), d0 = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(), day = 864e5, f = 0, t = d0 + day - 1;
+  if (v == "today") f = d0; else if (v == "7") f = d0 - 6 * day; else if (v == "30") f = d0 - 29 * day; else if (v == "month") f = new Date(n.getFullYear(), n.getMonth(), 1).getTime();
+  else if (v == "custom") { f = $("df").value ? new Date($("df").value + "T00:00:00").getTime() : 0; if ($("dt").value) t = new Date($("dt").value + "T23:59:59").getTime(); }
+  return { from: f, to: t };
+}
+
+/* ---- sign in ---- */
+function enter() {
+  window.AK = $("key").value.trim(); if (!window.AK) { $("lerr").textContent = "Enter the admin key."; return; }
+  api("admin").then(function (j) { D = j.drivers; try { sessionStorage.setItem("cab_ak", window.AK); } catch (e) { } $("login").hidden = true; $("app").hidden = false; setTab("overview"); })
+    .catch(function (e) { window.AK = ""; $("lerr").textContent = e.message; });
+}
+$("enter").onclick = enter; $("key").onkeydown = function (e) { if (e.key == "Enter") enter(); };
+$("out").onclick = function () { clearInterval(liveT); window.AK = ""; try { sessionStorage.removeItem("cab_ak"); } catch (e) { } $("app").hidden = true; $("login").hidden = false; $("key").value = ""; };
+try { var k0 = sessionStorage.getItem("cab_ak"); if (k0) { $("key").value = k0; enter(); } } catch (e) { }
+
+/* ---- tabs and filters ---- */
+function setTab(t, keep) {
+  S.tab = t; S.page = 1; if (!keep) { S.q = ""; S.status = ""; S.driver = 0; S.cid = ""; $("sq").value = ""; $("ss").value = ""; }
+  var o = SORTS[t] || []; S.sort = o.length ? o[0][0] : ""; $("so").innerHTML = o.map(function (x) { return '<option value="' + x[0] + '">' + x[1] + "</option>"; }).join("");
+  document.querySelectorAll("#tabs button").forEach(function (b) { b.setAttribute("aria-selected", b.dataset.t == t); });
+  var m = t == "manage", se = t == "settings", lv = t == "live", hid = m || se || lv, lst = t == "drivers" || t == "trips" || t == "customers" || t == "payouts";
+  $("mng").hidden = !m; $("sett").hidden = !se; $("live").hidden = !lv; clearInterval(liveT); $("pane").hidden = hid; $("fbar").hidden = hid; $("chips").hidden = hid; $("spanel").hidden = true; $("spanel").innerHTML = ""; $("perr").textContent = "";
+  $("sq").hidden = !lst; $("ss").hidden = t != "trips"; $("so").hidden = !o.length; $("exp").hidden = !lst; $("rng").hidden = t == "payouts"; $("cust").hidden = t == "payouts" || $("rng").value != "custom";
+  $("sq").placeholder = t == "drivers" ? "Search driver, plate or car" : t == "trips" ? "Search customer, driver or trip id" : t == "payouts" ? "Search driver, plate or UPI ID" : "Search customer name";
+  if (lv) { drawLive(); liveT = setInterval(drawLive, 5000); } else if (m) drawManage(); else if (se) drawSettings(); else load();
+}
+document.querySelectorAll("#tabs button").forEach(function (b) { b.onclick = function () { setTab(b.dataset.t); }; });
+$("rng").onchange = function () { $("cust").hidden = this.value != "custom"; S.page = 1; load(); };
+$("df").onchange = $("dt").onchange = function () { S.page = 1; load(); };
+$("sq").oninput = function () { clearTimeout(tmr); var v = this.value; tmr = setTimeout(function () { S.q = v; S.page = 1; load(); }, 300); };
+$("ss").onchange = function () { S.status = this.value; S.page = 1; load(); };
+$("so").onchange = function () { S.sort = this.value; S.page = 1; load(); };
+function chips() {
+  var h = ""; if (S.driver) h += '<span class="chip">Driver: ' + esc(S.dname) + ' <button data-c="d" aria-label="Remove driver filter">×</button></span> ';
+  if (S.cid) h += '<span class="chip">Customer: ' + esc(S.cname) + ' <button data-c="c" aria-label="Remove customer filter">×</button></span>';
+  $("chips").innerHTML = h; $("chips").querySelectorAll("button").forEach(function (b) { b.onclick = function () { if (b.dataset.c == "d") S.driver = 0; else S.cid = ""; S.page = 1; load(); }; });
+}
+
+/* ---- loading ---- */
+function ep() { return S.tab == "payouts" ? "payouts?" : "stats?"; }
+function params(extra) { var r = range(); return qs(Object.assign({ view: S.tab == "payouts" ? "balances" : S.tab, from: r.from, to: r.to, tz: tz, q: S.q, status: S.status, sort: S.sort, driver: S.driver, cid: S.cid, page: S.page }, extra || {})); }
+function load() {
+  if (S.tab == "manage") return; chips(); $("perr").textContent = "";
+  api(ep() + params()).then(function (j) { last = j; draw(j); }).catch(function (e) { $("perr").textContent = e.message; });
+}
+$("exp").onclick = function () {
+  api(ep() + params({ csv: 1, page: 1 })).then(function (j) {
+    if (!j.csv) { $("perr").textContent = "Nothing to export for these filters."; return; }
+    var a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([j.csv], { type: "text/csv" })); a.download = "cab-" + S.tab + "-" + new Date().toISOString().slice(0, 10) + ".csv"; document.body.appendChild(a); a.click(); a.remove();
+  }).catch(function (e) { $("perr").textContent = e.message; });
+};
+
+/* ---- drawing ---- */
+function tbl(cols, rows) {
+  return '<div class="tw"><table><thead><tr>' + cols.map(function (c) { return "<th" + (c.r ? ' class="r"' : "") + ">" + c.h + "</th>"; }).join("") + "</tr></thead><tbody>" +
+    (rows.length ? rows.map(function (r) { return "<tr>" + cols.map(function (c) { return "<td" + (c.r ? ' class="r"' : "") + ">" + c.f(r) + "</td>"; }).join("") + "</tr>"; }).join("") : '<tr><td colspan="' + cols.length + '" class="mut">Nothing found for these filters.</td></tr>') + "</tbody></table></div>";
+}
+function pager(j) {
+  var a = j.total ? (S.page - 1) * j.size + 1 : 0, b = Math.min(S.page * j.size, j.total);
+  return '<div class="row" style="margin-top:10px"><span class="mut">' + a + "–" + b + " of " + j.total + '</span><span><button class="o sm" id="pp"' + (S.page <= 1 ? " disabled" : "") + '>Previous</button> <button class="o sm" id="pn"' + (b >= j.total ? " disabled" : "") + ">Next</button></span></div>";
+}
+function wire() {
+  document.querySelectorAll("[data-s]").forEach(function (b) { b.onclick = function () { openSettle(+b.dataset.s); }; });
+  document.querySelectorAll("[data-h]").forEach(function (b) { b.onclick = function () { openHist(+b.dataset.h); }; });
+  var p = $("pp"), n = $("pn"); if (p) p.onclick = function () { S.page--; load(); }; if (n) n.onclick = function () { S.page++; load(); };
+  document.querySelectorAll("[data-drv]").forEach(function (b) { b.onclick = function () { S.driver = +b.dataset.drv; S.dname = b.dataset.n; S.cid = ""; setTab("trips", true); S.driver = +b.dataset.drv; load(); }; });
+  document.querySelectorAll("[data-cid]").forEach(function (b) { b.onclick = function () { S.cid = b.dataset.cid; S.cname = b.dataset.n; S.driver = 0; setTab("trips", true); S.cid = b.dataset.cid; load(); }; });
+}
+var lk = function (a, id, n) { return '<button class="lnk" data-' + a + '="' + esc(id) + '" data-n="' + esc(n) + '">' + esc(n) + "</button>"; };
+function chart(d) {
+  if (!d.length) return '<p class="mut">No completed trips in this period.</p>';
+  var m = d.slice(-60), mx = Math.max.apply(0, m.map(function (x) { return x.revenue; })) || 1, W = 600, H = 150, bw = W / m.length, h = '<svg viewBox="0 0 ' + W + " " + (H + 22) + '" role="img" aria-label="Daily revenue and commission">';
+  m.forEach(function (x, i) { var a = x.revenue / mx * H, c = x.commission / mx * H; h += '<g><title>' + x.d + ": " + inr(x.revenue) + " revenue, " + inr(x.commission) + ' commission</title><rect x="' + (i * bw + 1) + '" y="' + (H - a) + '" width="' + Math.max(1, bw - 2) + '" height="' + a + '" fill="var(--acc)"/><rect x="' + (i * bw + 1) + '" y="' + (H - c) + '" width="' + Math.max(1, bw - 2) + '" height="' + c + '" fill="var(--ok)"/></g>'; });
+  return h + '<text x="0" y="' + (H + 15) + '" font-size="11" fill="var(--mut)">' + m[0].d + '</text><text x="' + W + '" y="' + (H + 15) + '" font-size="11" text-anchor="end" fill="var(--mut)">' + m[m.length - 1].d + "</text></svg>";
+}
+function draw(j) {
+  var h = "", k = j.kpi;
+  if (S.tab == "overview") {
+    var K = function (v, l, c) { return '<div class="kpi' + (c ? " hl" : "") + '"><b>' + v + "</b><span>" + l + "</span></div>"; };
+    h = '<div class="kpis">' + K(inr(k.revenue), "Business revenue") + K(inr(k.commission), "Commission profit (" + j.pct + "%)", 1) + K(inr(k.payouts), "Driver payouts") + K(k.trips, "Completed trips") + K(inr(k.avg), "Average fare") + K(k.customers, "Customers served") + K(k.unserved, "Cancelled or unserved") + K(k.active, "Trips in progress") + K(k.online + " of " + k.drivers, "Drivers online") + "</div>" +
+      '<div class="box"><h2>Daily revenue <span class="mut" style="font-weight:normal;font-size:13px">(yellow = revenue, green = your commission)</span></h2>' + chart(j.daily) + "</div>" +
+      '<div class="g2"><div class="box"><h2>Top 5 drivers</h2>' + tbl([{ h: "Driver", f: function (r) { return lk("drv", r.id, r.name); } }, { h: "Trips", r: 1, f: function (r) { return r.trips; } }, { h: "Revenue", r: 1, f: function (r) { return inr(r.revenue); } }], j.top) + '</div><div class="box"><h2>Payment methods</h2>' + tbl([{ h: "Method", f: function (r) { return esc(r.method); } }, { h: "Trips", r: 1, f: function (r) { return r.trips; } }, { h: "Revenue", r: 1, f: function (r) { return inr(r.revenue); } }], j.methods) + "</div></div>";
+  } else if (S.tab == "drivers") {
+    h = '<div class="box">' + tbl([
+      { h: "Driver", f: function (r) { return '<span class="dot' + (r.online ? " on" : "") + '"></span>' + lk("drv", r.id, r.name) + '<br><span class="mut">' + esc(r.plate) + "</span>"; } },
+      { h: "Car", f: function (r) { return esc(r.car); } }, { h: "Trips", r: 1, f: function (r) { return r.trips; } }, { h: "Revenue", r: 1, f: function (r) { return inr(r.revenue); } },
+      { h: "Driver earns", r: 1, f: function (r) { return inr(r.earn); } }, { h: "Your commission", r: 1, f: function (r) { return inr(r.commission); } }, { h: "Last trip", f: function (r) { return dt(r.last_trip); } }], j.rows) + pager(j) + "</div>";
+  } else if (S.tab == "trips") {
+    var bad = { cancelled: 1, norides: 1 };
+    h = '<div class="box">' + tbl([
+      { h: "When", f: function (r) { return dt(r.created_at); } }, { h: "Trip", f: function (r) { return esc(r.id); } },
+      { h: "Customer", f: function (r) { return lk("cid", r.cid, r.customer); } }, { h: "Driver", f: function (r) { return r.driver ? lk("drv", r.driver_id, r.driver) : '<span class="mut">Not assigned</span>'; } },
+      { h: "Route", f: function (r) { return esc(r.from_place) + " to " + esc(r.to_place) + '<br><span class="mut">' + r.km.toFixed(1) + " km · " + esc(r.type) + "</span>"; } },
+      { h: "Fare", r: 1, f: function (r) { return inr(r.total); } }, { h: "Commission", r: 1, f: function (r) { return r.commission == null ? "–" : inr(r.commission); } },
+      { h: "Status", f: function (r) { return bad[r.status] ? "Cancelled / unserved" : r.status == "paid" ? "Paid" + (r.method ? " · " + esc(r.method) : "") : "In progress"; } }], j.rows) + pager(j) + "</div>";
+  } else if (S.tab == "customers") {
+    h = '<div class="box">' + tbl([
+      { h: "Customer", f: function (r) { return lk("cid", r.cid, r.name || "Customer"); } }, { h: "Trips", r: 1, f: function (r) { return r.trips; } }, { h: "Total spent", r: 1, f: function (r) { return inr(r.spent); } },
+      { h: "Served by", f: function (r) { var n = (r.driver_names || "").split(","); return esc(n.slice(0, 3).join(", ")) + (r.drivers > 3 ? ' <span class="mut">+' + (r.drivers - 3) + " more</span>" : ""); } },
+      { h: "Last trip", f: function (r) { return dt(r.last_trip); } }], j.rows) + pager(j) + "</div>";
+  }
+  if (S.tab == "payouts") h = drawPayouts(j);
+  $("pane").innerHTML = h; wire();
+}
+
+/* ---- payouts ---- */
+var PR = [], liveT = 0, LM = null, LP = {}, fitted = false;
+function drawLive() {
+  if (!LM) { LM = mkMap("lmap"); } LM.invalidateSize();
+  api("stats?view=live").then(function (j) {
+    var seen = {}, pts = [], busy = 0;
+    j.rows.forEach(function (d) {
+      seen[d.id] = 1; var ll = [d.lat, d.lng], on = d.busy > 0; if (on) busy++; pts.push(ll);
+      var tip = esc(d.name) + " · " + esc(d.plate) + (on ? " · on trip" : " · available");
+      if (LP[d.id]) { LP[d.id].setLatLng(ll).setStyle({ fillColor: on ? "#e67e22" : "#2e9e4f" }).setTooltipContent(tip); }
+      else LP[d.id] = L.circleMarker(ll, { radius: 8, color: "#222", weight: 1, fillColor: on ? "#e67e22" : "#2e9e4f", fillOpacity: .9 }).addTo(LM).bindTooltip(tip);
+    });
+    Object.keys(LP).forEach(function (id) { if (!seen[id]) { LM.removeLayer(LP[id]); delete LP[id]; } });
+    if (pts.length && !fitted) { LM.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom: 14 }); fitted = true; }
+    $("lsum").textContent = j.rows.length + " drivers sharing GPS · " + busy + " on a trip · " + (j.online - j.rows.length) + " online without a recent GPS location";
+  }).catch(function (e) { $("perr").textContent = e.message; });
+}
+function drawPayouts(j) {
+  PR = j.rows;
+  return '<div class="kpis"><div class="kpi hl"><b>' + inr(j.sum.due) + '</b><span>You owe drivers</span></div><div class="kpi"><b>' + inr(j.sum.owed) + '</b><span>Drivers owe you (cash or direct UPI)</span></div></div><div class="box">' + tbl([
+    { h: "Driver", f: function (r) { return esc(r.name) + '<br><span class="mut">' + esc(r.plate) + "</span>"; } },
+    { h: "UPI ID", f: function (r) { return r.upi ? esc(r.upi) : '<span class="mut">Not set</span>'; } },
+    { h: "Trips", r: 1, f: function (r) { return r.trips; } },
+    { h: "Balance", r: 1, f: function (r) { return r.balance > 0 ? "<b>" + inr(r.balance) + '</b><br><span class="mut">you owe driver</span>' : r.balance < 0 ? "<b>" + inr(-r.balance) + '</b><br><span class="mut">driver owes you</span>' : "Settled"; } },
+    { h: "", f: function (r) { return '<button class="sm" data-s="' + r.id + '">Settle</button> <button class="o sm" data-h="' + r.id + '">History</button>'; } }], j.rows) + pager(j) + "</div>";
+}
+function openSettle(id) {
+  var r = PR.filter(function (x) { return x.id == id; })[0], dir = r.balance < 0 ? "received" : "paid", P = $("spanel");
+  P.hidden = false; window.scrollTo(0, 0);
+  P.innerHTML = '<div class="box req"><h2>Settle with ' + esc(r.name) + '</h2><p class="mut">' + (r.balance > 0 ? "You owe this driver " + inr(r.balance) + "." : r.balance < 0 ? "This driver owes you " + inr(-r.balance) + "." : "The balance is settled.") + "</p>" +
+    '<label class="chk"><input type="radio" name="dir" value="paid"' + (dir == "paid" ? " checked" : "") + '> I paid the driver</label><label class="chk"><input type="radio" name="dir" value="received"' + (dir == "received" ? " checked" : "") + "> The driver paid me</label>" +
+    '<label for="sa">Amount (₹)</label><input id="sa" inputmode="numeric" value="' + Math.abs(r.balance) + '"><div id="sqr" style="text-align:center;margin-top:10px"></div>' +
+    '<label for="sr">Reference or UTR (optional)</label><input id="sr"><label for="sn">Note (optional)</label><input id="sn" placeholder="For example, weekly payout">' +
+    '<div class="two"><button class="o" id="sx">Cancel</button><button class="go" id="sk">Mark as done</button></div><p class="err" id="se" role="alert"></p></div>';
+  function qr() {
+    var d = document.querySelector("input[name=dir]:checked").value, a = Math.round(+$("sa").value) || 0, box = $("sqr");
+    if (d == "paid" && r.upi && a > 0) { var u = upiUrl(r.upi, r.name, a, "Cab payout"), img = qrURL(u); box.innerHTML = (img ? '<img class="qr" src="' + img + '" width="200" height="200" alt="UPI QR to pay the driver">' : "") + '<p class="mut" style="margin:6px 0">Scan to pay ' + esc(r.upi) + '</p><a class="lnkbtn" href="' + esc(u) + '">Open UPI app</a>'; }
+    else box.innerHTML = d == "paid" && !r.upi ? '<p class="err">No UPI ID saved for this driver. Add one in Manage drivers, or pay another way and mark it done.</p>' : "";
+  }
+  document.querySelectorAll("input[name=dir]").forEach(function (x) { x.onchange = qr; }); $("sa").oninput = qr; qr();
+  $("sx").onclick = function () { P.hidden = true; P.innerHTML = ""; };
+  $("sk").onclick = function () {
+    api("payouts", { action: "settle", driver_id: id, direction: document.querySelector("input[name=dir]:checked").value, amount: $("sa").value, ref: $("sr").value, note: $("sn").value })
+      .then(function () { P.hidden = true; P.innerHTML = ""; load(); }).catch(function (e) { $("se").textContent = e.message; });
+  };
+}
+function openHist(id) {
+  var r = PR.filter(function (x) { return x.id == id; })[0], P = $("spanel");
+  api("payouts?view=history&driver=" + id).then(function (j) {
+    P.hidden = false; window.scrollTo(0, 0);
+    P.innerHTML = '<div class="box"><div class="row"><h2 style="margin:0">Payout history · ' + esc(r.name) + '</h2><button class="o sm" id="hx">Close</button></div>' + tbl([
+      { h: "When", f: function (x) { return dt(x.created_at); } }, { h: "Type", f: function (x) { return x.amount > 0 ? "You paid driver" : "Driver paid you"; } },
+      { h: "Amount", r: 1, f: function (x) { return inr(Math.abs(x.amount)); } }, { h: "Reference", f: function (x) { return esc(x.ref || "–"); } }, { h: "Note", f: function (x) { return esc(x.note || "–"); } }], j.rows) + "</div>";
+    $("hx").onclick = function () { P.hidden = true; P.innerHTML = ""; };
+  }).catch(function (e) { $("perr").textContent = e.message; });
+}
+
+/* ---- payment settings ---- */
+function setQr() { var u = $("su").value.trim(), b = $("sqrp"); if (!u) { b.innerHTML = ""; return; } var img = qrURL(upiUrl(u, $("sp").value || "Agency", 0, "")); b.innerHTML = img ? '<img class="qr" src="' + img + '" width="180" height="180" alt="Agency UPI QR"><p class="mut" style="margin:6px 0 0">Preview of your agency QR</p>' : ""; }
+function drawSettings() {
+  $("sterr").textContent = "";
+  api("payouts?view=settings").then(function (j) { var s = j.settings; $("su").value = s.upi_id; $("sp").value = s.upi_name; document.querySelector("input[name=pm2][value=" + s.pay_mode + "]").checked = true; setQr(); }).catch(function (e) { $("sterr").textContent = e.message; });
+}
+$("su").oninput = $("sp").oninput = setQr;
+$("ssave").onclick = function () {
+  api("payouts", { action: "settings", upi_id: $("su").value, upi_name: $("sp").value, pay_mode: document.querySelector("input[name=pm2]:checked").value })
+    .then(function () { $("sterr").textContent = ""; $("ssave").textContent = "Saved ✓"; setTimeout(function () { $("ssave").textContent = "Save settings"; }, 1500); }).catch(function (e) { $("sterr").textContent = e.message; });
+};
+
+/* ---- manage drivers (add, edit, delete) ---- */
+function err(m) { $("err").textContent = m || ""; }
+function call(b) { err(); return api("admin", b).then(function (j) { D = j.drivers; drawManage(); return true; }).catch(function (e) { err(e.message); return false; }); }
+function reset() { editId = 0; ["fn", "fc", "fp", "fr", "fu"].forEach(function (i) { $(i).value = ""; }); $("fh").textContent = "Add a driver"; $("save").textContent = "Add driver"; err(); }
+$("clear").onclick = reset;
+$("save").onclick = function () { call({ action: editId ? "update" : "add", id: editId, name: $("fn").value, car: $("fc").value, plate: $("fp").value, rating: $("fr").value, upi: $("fu").value }).then(function (ok) { if (ok) reset(); }); };
+function drawManage() {
+  api("admin").then(function (j) { D = j.drivers; rowsM(); }).catch(function (e) { err(e.message); });
+}
+function rowsM() {
+  $("rows").innerHTML = D.length ? D.map(function (d) {
+    return "<tr><td><b>" + esc(d.name) + '</b><br><span class="plate">' + esc(d.plate) + "</span></td><td>" + esc(d.car) + "</td><td>★ " + esc(d.rating) + "</td><td>" + (d.upi ? esc(d.upi) : '<span class="mut">Not set</span>') + "</td><td>" + d.trips + '</td><td><input type="checkbox" data-o="' + d.id + '" aria-label="Online ' + esc(d.name) + '"' + (d.online ? " checked" : "") + ' style="width:auto"></td>' +
+      '<td style="white-space:nowrap"><button class="o sm" data-e="' + d.id + '">Edit</button> <button class="rej sm" data-x="' + d.id + '">Delete</button></td></tr>';
+  }).join("") : '<tr><td colspan="7" class="mut">No drivers yet. Add your first driver above.</td></tr>';
+  document.querySelectorAll("[data-o]").forEach(function (c) { c.onchange = function () { call({ action: "online", id: +c.dataset.o, value: c.checked }); }; });
+  document.querySelectorAll("[data-e]").forEach(function (b) { b.onclick = function () { var d = D.filter(function (x) { return x.id == b.dataset.e; })[0]; editId = d.id; $("fn").value = d.name; $("fc").value = d.car; $("fp").value = d.plate; $("fr").value = d.rating; $("fu").value = d.upi || ""; $("fh").textContent = "Edit driver #" + d.id; $("save").textContent = "Save changes"; window.scrollTo(0, 0); $("fn").focus(); }; });
+  document.querySelectorAll("[data-x]").forEach(function (b) { b.onclick = function () { var d = D.filter(function (x) { return x.id == b.dataset.x; })[0]; if (confirm("Delete " + d.name + " (" + d.plate + ")? Their trip history and receipts are kept.")) call({ action: "delete", id: d.id }).then(function () { if (editId == d.id) reset(); }); }; });
+}
+</script>
+</body></html>

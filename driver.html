@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Driver · Cab Portal</title><link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<header><span>🚖 Driver app</span><nav><a href="customer.html">Customer app</a></nav></header>
+<main>
+  <div class="box">
+    <label for="dsel" style="margin-top:0">Logged in as</label><select id="dsel"></select>
+    <label class="chk"><input type="checkbox" id="don"> Online. Receive booking requests</label>
+    <p class="mut" id="gps" style="margin:8px 0 0">GPS is off. Go online to share your location.</p>
+    <p class="err" id="derr" role="alert"></p>
+  </div>
+
+  <div class="box req" id="dreq" hidden>
+    <h2>New booking request</h2><p class="big" id="rq-fare"></p>
+    <div class="row"><span class="mut">Customer</span><b id="rq-name"></b></div>
+    <div class="row"><span class="mut">Pickup</span><b id="rq-from" style="text-align:right"></b></div>
+    <div class="row"><span class="mut">Drop</span><b id="rq-to" style="text-align:right"></b></div>
+    <div class="row"><span class="mut">Trip distance</span><b id="rq-km"></b></div>
+    <div class="row"><span class="mut">Pickup is</span><b id="rq-d"></b></div>
+    <p class="status" id="rq-t" style="margin:8px 0 0"></p>
+    <div class="two"><button class="rej" id="rej">Reject</button><button class="go" id="acc">Accept</button></div>
+  </div>
+
+  <div class="box" id="dtrip" hidden>
+    <h2 id="dt-h"></h2><p id="dt-i" style="margin:0 0 8px"></p>
+    <div id="dmap" class="map"></div>
+    <a id="nav" class="lnkbtn" target="_blank" rel="noopener" href="#">Navigate in Google Maps</a>
+    <div id="dt-pin" hidden>
+      <label for="dpin">Customer PIN</label><input id="dpin" inputmode="numeric" maxlength="4" placeholder="4-digit PIN">
+      <button id="dstart">Start trip</button>
+    </div>
+    <button id="dact" hidden></button>
+  </div>
+
+  <div class="box" id="didle"><p class="mut" id="didle-t" style="margin:0"></p></div>
+  <div class="box"><h2>My earnings</h2><div id="earn"></div></div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="shared.js"></script>
+<script>
+var did = +(st("cab_did") || 1), S = null, busy = false, routeC = {};
+
+api("driver?list=1").then(function (j) {
+  j.drivers.forEach(function (d) { $("dsel").add(new Option(d.name + " · " + d.car, d.id)); }); $("dsel").value = did; poll();
+}).catch(function (e) { $("derr").textContent = e.message; });
+$("dsel").onchange = function () { did = +this.value; st("cab_did", did); S = null; stopGps(); poll(); };
+
+function call(body) { busy = true; body.id = did; $("derr").textContent = "";
+  return api("driver", body).then(function (j) { S = j; draw(); }).catch(function (e) { $("derr").textContent = e.message; poll(); }).then(function () { busy = false; }); }
+function poll() {
+  if (busy) return; var need = S && S.active && !routeC[S.active.id];
+  api("driver?id=" + did + (need ? "&route=1" : "")).then(function (j) { if (!busy) { S = j; draw(); } }).catch(function (e) { $("derr").textContent = e.message; });
+}
+
+$("don").onchange = function () { call({ action: "online", value: this.checked }); };
+$("acc").onclick = function () { call({ action: "accept", rideId: S.offer.id }); };
+$("rej").onclick = function () { call({ action: "reject", rideId: S.offer.id }); };
+$("dstart").onclick = function () { call({ action: "start", pin: $("dpin").value }).then(function () { if (!$("derr").textContent) $("dpin").value = ""; }); };
+$("dact").onclick = function () { call({ action: this.dataset.a }); };
+
+/* ---- live GPS: sent to the server every few seconds while online ---- */
+var watchId = null, pos = null, lastSent = 0;
+function gps(m) { $("gps").textContent = m; }
+function startGps() {
+  if (watchId !== null) return;
+  if (!navigator.geolocation) { gps("This device has no GPS."); return; }
+  watchId = navigator.geolocation.watchPosition(function (p) {
+    pos = { lat: p.coords.latitude, lng: p.coords.longitude }; gps("GPS on · accuracy " + Math.round(p.coords.accuracy) + " m. Keep this page open."); sendLoc(); moveMe();
+  }, function (e) { gps(e.code == 1 ? "Location is blocked. Allow location for this site in your browser settings to get trips." : "Cannot get GPS: " + e.message); },
+  { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+}
+function stopGps() { if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; } pos = null; gps("GPS is off. Go online to share your location."); }
+function sendLoc() { if (!pos || !S || !S.driver.online) return; var n = Date.now(); if (n - lastSent < 4000) return; lastSent = n; api("driver", { id: did, action: "loc", lat: pos.lat, lng: pos.lng }).catch(function () { }); }
+setInterval(sendLoc, 4000);
+
+/* ---- trip map ---- */
+var DM = null, DL = {}, dmid = "";
+function tripMap(a) {
+  if (!DM || dmid != a.id) {
+    if (DM) DM.remove(); dmid = a.id; DL = {}; DM = mkMap("dmap"); DM._targets = [[a.from_lat, a.from_lng], [a.to_lat, a.to_lng]];
+    L.marker([a.from_lat, a.from_lng], { icon: ico("🟢") }).addTo(DM).bindTooltip("Pickup"); L.marker([a.to_lat, a.to_lng], { icon: ico("🏁") }).addTo(DM).bindTooltip("Drop");
+    DM.fitBounds(L.latLngBounds([[a.from_lat, a.from_lng], [a.to_lat, a.to_lng]]), { padding: [30, 30] });
+  } else DM.invalidateSize();
+  if (a.route) routeC[a.id] = a.route;
+  if (!DL.route && routeC[a.id]) DL.route = L.polyline(routeC[a.id], { color: "#222", weight: 5, opacity: .6 }).addTo(DM);
+  moveMe();
+}
+function moveMe() {
+  if (!DM || !pos) return;
+  if (!DL.me) { DL.me = L.marker([pos.lat, pos.lng], { icon: ico("🚕", "cab"), zIndexOffset: 1000 }).addTo(DM); DM.fitBounds(L.latLngBounds([[pos.lat, pos.lng]].concat(DM._targets || [])), { padding: [30, 30], maxZoom: 15 }); }
+  else DL.me.setLatLng([pos.lat, pos.lng]);
+}
+
+function draw() {
+  if (!S) return; var o = S.offer, a = S.active, on = !!S.driver.online;
+  $("don").checked = on; if (on) startGps(); else if (watchId !== null) stopGps();
+  $("dreq").hidden = !o; $("dtrip").hidden = !a; $("didle").hidden = !!(o || a);
+  if (o) { $("rq-fare").textContent = "You earn ₹" + o.earn; $("rq-name").textContent = o.first; $("rq-from").textContent = o.from_place; $("rq-to").textContent = o.to_place; $("rq-km").textContent = o.km.toFixed(1) + " km"; $("rq-d").textContent = o.dist != null ? o.dist + " km away" : "distance unknown"; }
+  if (a) {
+    var s = a.status, b = $("dact"), nv = $("nav"); $("dt-pin").hidden = s != "arrived"; b.hidden = !(s == "accepted" || s == "ontrip");
+    var dest = s == "ontrip" ? [a.to_lat, a.to_lng] : [a.from_lat, a.from_lng]; nv.hidden = !(s == "accepted" || s == "arrived" || s == "ontrip"); nv.href = "https://www.google.com/maps/dir/?api=1&destination=" + dest[0] + "," + dest[1] + "&travelmode=driving";
+    if (s == "accepted" || s == "arrived" || s == "ontrip") tripMap(a);
+    if (s == "accepted") { $("dt-h").textContent = "Go to pickup"; $("dt-i").textContent = "Pick up " + a.first + " at " + a.from_place + "."; b.textContent = "I have arrived at pickup"; b.dataset.a = "arrived"; }
+    if (s == "arrived") { $("dt-h").textContent = "You have arrived"; $("dt-i").textContent = "Ask " + a.first + " for the 4-digit PIN and enter it to start the trip."; }
+    if (s == "ontrip") { $("dt-h").textContent = "Trip in progress"; $("dt-i").textContent = "Drive to " + a.to_place + " (" + a.km.toFixed(1) + " km)."; b.textContent = "End trip"; b.dataset.a = "end"; }
+    if (s == "ended") { $("dt-h").textContent = "Trip ended"; $("dt-i").textContent = "Waiting for " + a.first + " to pay ₹" + a.total + "."; }
+    if (s == "paid") { $("dt-h").textContent = "Payment received"; $("dt-i").textContent = "₹" + a.total + " paid by " + a.method + ". Your earning: ₹" + a.earn + "."; }
+  } else if (!o) $("didle-t").textContent = on ? "You are online. New booking requests will appear here." : "You are offline. Turn on Online to receive requests.";
+  $("earn").innerHTML = '<div class="row"><span>Completed trips</span><b>' + S.earnings.count + '</b></div><div class="row"><span>Total earnings (after agency commission)</span><b>₹' + S.earnings.total + '</b></div>' +
+    '<div class="row"><span>' + (S.earnings.balance >= 0 ? "Pending payout from agency" : "You owe the agency") + '</span><b>₹' + Math.abs(S.earnings.balance) + '</b></div>' +
+    '<p class="mut" style="margin:6px 0 0">' + (S.earnings.balance < 0 ? "This is the commission on cash or direct payments you collected. " : "") + 'Payout UPI ID: ' + (S.driver.upi ? esc(S.driver.upi) : "not set. Ask the agency") + '</p>';
+}
+setInterval(poll, 2000);
+setInterval(function () { if (S && S.offer) $("rq-t").textContent = "Reply within " + Math.max(0, 15 - Math.floor((nowS() - S.offer.offer_at) / 1000)) + " s"; }, 250);
+</script>
+</body></html>
