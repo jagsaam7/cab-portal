@@ -1,0 +1,9 @@
+{
+  "name": "cab-portal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vercel dev" },
+  "dependencies": { "@libsql/client": "^0.14.0" },
+  "engines": { "node": ">=18" }
+}
